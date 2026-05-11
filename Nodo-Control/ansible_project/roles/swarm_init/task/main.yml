@@ -1,0 +1,15 @@
+---
+- name: 1. Inicializar Docker Swarm
+  community.docker.docker_swarm:
+    state: present
+    advertise_addr: "192.168.56.11"
+  register: swarm_output
+
+- name: 2. Obtener token para Workers
+  shell: "docker swarm join-token -q worker"
+  register: swarm_info
+  changed_when: false
+
+- name: 3. Guardar token como fact global
+  set_fact:
+    worker_token: "{{ swarm_info.stdout }}"
