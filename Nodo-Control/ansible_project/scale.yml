@@ -1,0 +1,9 @@
+---
+- name: Escalar servicio web
+  hosts: manager
+  become: yes
+  tasks:
+    - name: Escalar réplicas del servicio web
+      shell: "docker service scale mi_proyecto_web={{ replicas }}"
+      vars:
+        replicas: "{{ replicas | default(3) }}"
