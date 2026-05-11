@@ -1,0 +1,21 @@
+---
+- name: 1. Instalar Docker en todos los nodos
+  hosts: swarm_nodes
+  roles:
+    - docker_install
+
+- name: 2. Inicializar Cluster Swarm (Solo Manager)
+  hosts: manager
+  roles:
+    - swarm_init
+
+- name: 3. Unir Nodos Workers al Swarm
+  hosts: workers
+  roles:
+    - swarm_join
+
+- name: 4. Desplegar Stack de Aplicacion
+  hosts: manager
+  become: yes
+  roles:
+    - deploy_app
