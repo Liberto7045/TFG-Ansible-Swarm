@@ -1,0 +1,53 @@
+---
+- name: 1. Actualizar caché de apt
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: 2. Instalar dependencias necesarias
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - python3-pip
+    state: present
+
+- name: 3. Agregar clave GPG oficial de Docker
+  ansible.builtin.apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: 4. Agregar repositorio oficial de Docker
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ans>
+    state: present
+    filename: docker
+
+- name: 5. Instalar Docker CE
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+    state: present
+    update_cache: yes
+
+- name: 6. Instalar SDK de Docker para Python
+  ansible.builtin.apt:
+    name: python3-docker
+    state: present
+
+- name: 7. Asegurar que Docker esté iniciado y habilitado
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: 8. Agregar usuario al grupo docker
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: yes
