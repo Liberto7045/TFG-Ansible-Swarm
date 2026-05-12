@@ -1,0 +1,695 @@
+ITERACIÓN 1 — Ubuntu 16.04.7 Server (Diciembre)
+Primera versión del proyecto. Se abandonó por incompatibilidades con Python 3.5 en Ubuntu 16.04.
+
+
+10 de Diciembre
+Creación de las 4 VMs
+Crear 4 VMs con Ubuntu 16.04.7 Server en VMware Workstation:
+Nodo Control-Ansible (Ansible ya instalado) — 192.168.222.137 / 192.168.56.10
+Swarm Manager — 192.168.222.134 / 192.168.56.11
+Worker 1 — 192.168.222.135 / 192.168.56.12
+Worker 2 — 192.168.222.136 / 192.168.56.13
+Instalar Python, openssh-server y sshpass en las VMs. En el Nodo Control también Ansible.
+Configurar el adaptador Host-Only en cada máquina editando /etc/network/interfaces. Verificar conectividad con ping entre nodos.
+Generar clave SSH en el Nodo Control y enviarla a los demás nodos:
+ssh-keygen -t rsa -b 4096
+ssh-copy-id user@192.168.56.11
+ssh-copy-id user@192.168.56.12
+ssh-copy-id user@192.168.56.13
+Crear el inventario de Ansible:
+nano ~/ansible_project/hosts
+Verificar conexión Ansible:
+ansible all -i hosts -m ping -K
+192.168.56.11 | SUCCESS => { "ping": "pong" }
+192.168.56.12 | SUCCESS => { "ping": "pong" }
+192.168.56.13 | SUCCESS => { "ping": "pong" }
+
+11 de Diciembre
+Crear el rol docker_install con ansible-galaxy:
+ansible-galaxy init docker_install
+Definir tareas en roles/docker_install/tasks/main.yml (instalación de dependencias y Docker).
+Configurar el playbook principal deploy_swarm.yml.
+Lanzar el playbook por primera vez:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+
+15 de Diciembre
+Crear el rol swarm_init:
+ansible-galaxy init swarm_init
+Editar swarm_init/tasks/main.yml con tareas para inicializar Swarm y obtener el token.
+Actualizar deploy_swarm.yml con la nueva fase.
+Ejecutar el playbook:
+❌ Error: Ruta incorrecta: ~/ansible_proyect (typo — falta la 'c' en project)
+
+7 de Enero — Problemas con Ubuntu 16.04
+📌 Nota: Se reescribe el diario en digital porque se perdió mucho en papel.
+Crear el directorio que faltaba:
+mkdir -p ~/ansible_project/roles/docker_install/tasks
+Escribir el contenido de roles/docker_install/tasks/main.yml:
+- name: 1. Actualizar caché de apt
+  ansible.builtin.apt:
+    update_cache: yes
+- name: 2. Instalar dependencias necesarias
+  ansible.builtin.apt:
+    name: [apt-transport-https, ca-certificates, curl, gnupg, lsb-release, python3-pip]
+    state: present
+- name: 3. Instalar SDK Docker para Python
+  ansible.builtin.apt:
+    name: python3-docker
+    state: present
+- name: 4. Asegurar que Docker esté iniciado
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: yes
+- name: 5. Agregar usuario al grupo docker
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: yes
+Forzar el intérprete Python en el inventario:
+nano ~/ansible_project/hosts
+# En [all:vars] añadir:
+ansible_python_interpreter=/usr/bin/python3
+Asegurar SDK en el Manager:
+ansible manager -i ~/ansible_project/hosts -m apt -a "name=python3-docker state=present" -b -K
+192.168.56.11 | CHANGED | rc=0
+Limpieza de archivos temporales corruptos:
+ansible manager -i ~/ansible_project/hosts -m shell -a "apt-get install -y python3-docker" -b -K
+192.168.56.11 | CHANGED | rc=0 >> python3-docker is already the newest version
+Crear directorio y escribir roles/swarm_init/tasks/main.yml (primera versión con community.docker):
+mkdir -p ~/ansible_project/roles/swarm_init/tasks
+- name: 1. Inicializar Docker Swarm
+  community.docker.docker_swarm:
+    state: present
+    advertise_addr: 192.168.56.11
+  register: swarm_output
+  run_once: true
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+- name: 2. Obtener el token para Workers
+  community.docker.docker_swarm_info:
+    host: 192.168.56.11
+  register: token_worker_output
+  run_once: true
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+Reinstalación limpia del SDK de Docker para Python:
+ansible manager -i ~/ansible_project/hosts -m shell -a "pip3 uninstall -y docker docker-py docker-compose" -b -K
+ansible manager -i ~/ansible_project/hosts -m shell -a "pip3 install docker" -b -K
+ansible manager -i ~/ansible_project/hosts -m shell -a "pip3 install docker==6.1.3" -b -K
+Actualizar swarm_init eliminando run_once y simplificando:
+- name: 1. Inicializar Docker Swarm
+  community.docker.docker_swarm:
+    state: present
+    advertise_addr: 192.168.56.11
+  register: swarm_output
+  ignore_errors: yes
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+- name: 2. Obtener el token para Workers
+  community.docker.docker_swarm_info:
+  register: token_worker_output
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+Escribir roles/swarm_join/tasks/main.yml:
+- name: Unir los nodos al cluster Swarm
+  community.docker.docker_swarm:
+    state: join
+    advertise_addr: "{{ ansible_host }}"
+    join_token: "{{ hostvars['192.168.56.11']['token_worker_output']['swarm_info']['JoinTokens']['Worker'] }}"
+    remote_addrs: [ "192.168.56.11:2377" ]
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+Error al ejecutar el playbook:
+❌ Error: SyntaxError: invalid syntax
+❌ Error: MODULE FAILURE: the 'ssl' module is compiled with {ssl.OPENSSL_VERSION!r}
+El sistema usa Python 3.5 (rutas /usr/lib/python3.5/). Ubuntu 16.04 tiene un conflicto con las librerías modernas de SSL.
+Cambiar el intérprete a Python 2.7 en el inventario:
+[all:vars]
+ansible_user=user
+ansible_become=yes
+ansible_become_method=sudo
+ansible_python_interpreter=/usr/bin/python
+Instalar versión compatible de community.docker:
+ansible-galaxy collection install community.docker:3.4.10 --force
+Reescribir roles/swarm_init con shell puro (abandonar community.docker):
+- name: 1. Inicializar Docker Swarm manualmente
+  shell: "docker swarm init --advertise-addr 192.168.56.11"
+  register: swarm_init_result
+  failed_when:
+    - swarm_init_result.rc != 0
+    - "'this node is already part of a swarm' not in swarm_init_result.stderr"
+- name: 2. Extraer el token de Worker
+  shell: "docker swarm join-token -q worker"
+  register: token_worker_output
+  changed_when: false
+Reescribir roles/swarm_join con shell puro:
+- name: 1. Comprobar si ya es parte de un Swarm
+  shell: docker info | grep "Swarm"
+  register: swarm_status
+  changed_when: false
+- name: 2. Unirse al cluster Swarm (vía Shell)
+  shell: "docker swarm join --token {{ hostvars['192.168.56.11']['token_worker_output']['stdout'] }} 192.168.56.11:2377"
+  when: "'Swarm: inactive' in swarm_status.stdout"
+Ejecutar el playbook completo:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml -K
+PLAY RECAP
+192.168.56.11 : ok=9  changed=1  unreachable=0  failed=0
+192.168.56.12 : ok=9  changed=2  unreachable=0  failed=0
+192.168.56.13 : ok=9  changed=2  unreachable=0  failed=0
+Verificar el clúster desde el Manager:
+ssh user@192.168.56.11
+sudo docker node ls
+ID              HOSTNAME  STATUS  AVAILABILITY  MANAGER STATUS  ENGINE VERSION
+orxei13w1vl75ox *  ubuntu  Ready   Active        Leader          20.10.7
+s2nrv5xjathbic0   ubuntu  Ready   Active                         20.10.7
+va01kz177mpusmox  ubuntu  Ready   Active                         20.10.7
+
+
+DECISIÓN: Ubuntu 16.04 tiene demasiadas incompatibilidades (Python 3.5 + OpenSSL antiguo). Se reinicia el proyecto con Ubuntu 24.04.4 LTS.
+
+ITERACIÓN 2 — Ubuntu 24.04.4 LTS (Enero en adelante)
+
+
+FASE 1 — Preparación de VMs
+Crear 4 VMs en VMware Workstation con Ubuntu 24.04.4 LTS Server:
+2 GB RAM, 1 core (2 en el Manager), 20 GB disco
+Adaptador 1: NAT (ens33) — internet
+Adaptador 2: Host-Only (ens34) — red interna
+Instalar VMware Tools en cada VM:
+sudo apt install open-vm-tools -y
+Configurar IPs estáticas. Editar en cada VM:
+sudo nano /etc/netplan/00-installer-config.yaml
+Ejemplo para el Nodo Control:
+network:
+  ethernets:
+    ens33:
+      dhcp4: true
+    ens34:
+      dhcp4: no
+      addresses: [192.168.56.10/24]
+  version: 2
+sudo netplan apply
+📌 Nota: Cada VM tiene un /etc/netplan/50-cloud-init.yaml que activa DHCP en ens34. Genera conflicto con la IP estática asignando también una IP 192.168.145.x. Se corrige poniendo dhcp4: no en ese archivo también.
+Establecer hostnames:
+sudo hostnamectl set-hostname nodocontrol    # en .10
+sudo hostnamectl set-hostname swarm-manager  # en .11
+sudo hostnamectl set-hostname worker-1       # en .12
+sudo hostnamectl set-hostname worker-2       # en .13
+Verificar conectividad:
+ping -c 3 192.168.56.11
+3 packets transmitted, 3 received, 0% packet loss
+Conectarse desde la terminal del host a el Nodo Control por SSH para poder copiar y pegar:
+ssh nodocontrol@192.168.145.131
+📌 Nota: La IP NAT del Nodo Control era inicialmente 192.168.145.131 porque el adaptador NAT estaba en un VMnet diferente al resto de VMs. Más adelante se corrige.
+
+FASE 2 — Configuración de Ansible
+Instalar Ansible en el Nodo Control:
+sudo apt update && sudo apt install ansible -y
+ansible --version
+ansible [core 2.16.3]
+Instalar la colección community.docker:
+ansible-galaxy collection install community.docker
+Installing 'community.docker:X.X.X' to '~/.ansible/collections'
+Generar clave SSH:
+ssh-keygen -t rsa -b 4096
+Pulsar Enter en todo (sin passphrase).
+Copiar clave SSH a los 3 nodos:
+ssh-copy-id swarmmanager@192.168.56.11
+ssh-copy-id worker1@192.168.56.12
+ssh-copy-id worker2@192.168.56.13
+Configurar sudo sin contraseña en cada nodo (ejecutar en cada VM):
+sudo visudo
+# Añadir al final:
+swarmmanager ALL=(ALL) NOPASSWD:ALL   # en .11
+worker1 ALL=(ALL) NOPASSWD:ALL         # en .12
+worker2 ALL=(ALL) NOPASSWD:ALL         # en .13
+📌 Nota: Inicialmente se puso 'user ALL=(ALL) NOPASSWD:ALL' pero el usuario real no se llama 'user'. Cada VM tiene un usuario diferente: swarmmanager, worker1, worker2.
+Crear el directorio del proyecto y el inventario:
+mkdir ~/ansible_project
+nano ~/ansible_project/hosts
+[swarm_nodes]
+192.168.56.11 ansible_user=swarmmanager
+192.168.56.12 ansible_user=worker1
+192.168.56.13 ansible_user=worker2
+
+[manager]
+192.168.56.11 ansible_user=swarmmanager
+
+[workers]
+192.168.56.12 ansible_user=worker1
+192.168.56.13 ansible_user=worker2
+
+[all:vars]
+ansible_become=yes
+ansible_become_method=sudo
+ansible_python_interpreter=/usr/bin/python3
+📌 Nota: Primera versión del inventario tenía ansible_user=user (incorrecto) y el typo ansible_pyhton_interpreter. Se corrigió poniendo el usuario correcto por host y el nombre correcto del parámetro.
+Verificar conexión:
+ansible all -m ping -i ~/ansible_project/hosts
+Primer intento — error:
+192.168.56.11 | UNREACHABLE! => Failed to connect to the host via ssh: user@192.168.56.11: Permission denied
+✅ Solución: Cambiar ansible_user=user por el usuario correcto de cada VM.
+Segundo intento — error:
+192.168.56.11 | FAILED! => { "msg": "Missing sudo password" }
+✅ Solución: Añadir el nombre de usuario correcto en visudo con NOPASSWD:ALL.
+Tercer intento — correcto:
+192.168.56.11 | SUCCESS => { "ping": "pong" }
+192.168.56.12 | SUCCESS => { "ping": "pong" }
+192.168.56.13 | SUCCESS => { "ping": "pong" }
+
+FASE 3 — Instalación de Docker
+Crear estructura del rol:
+mkdir -p ~/ansible_project/roles/docker_install/tasks
+nano ~/ansible_project/roles/docker_install/tasks/main.yml
+Primera versión del rol (sin repositorio oficial de Docker):
+- name: 1. Actualizar caché de apt
+  ansible.builtin.apt:
+    update_cache: yes
+- name: 2. Instalar dependencias necesarias
+  ansible.builtin.apt:
+    name: [apt-transport-https, ca-certificates, curl, gnupg, lsb-release, python3-pip]
+    state: present
+- name: 3. Instalar SDK de Docker para Python
+  ansible.builtin.apt:
+    name: python3-docker
+    state: present
+- name: 4. Asegurar que Docker esté iniciado y habilitado
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: yes
+- name: 5. Agregar usuario al grupo docker
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: yes
+Crear el playbook principal deploy_swarm.yml (primera fase):
+nano ~/ansible_project/deploy_swarm.yml
+---
+- name: 1. Instalar Docker en todos los nodos
+  hosts: swarm_nodes
+  roles:
+    - docker_install
+Ejecutar el playbook:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+Error en la tarea 4:
+fatal: [192.168.56.11]: FAILED! => {"msg": "Could not find the requested service docker: host"}
+❌ Error: Docker CE no estaba instalado porque el rol no añadía el repositorio oficial de Docker.
+✅ Solución: Añadir las tareas de clave GPG, repositorio oficial e instalación de docker-ce.
+Versión corregida del rol docker_install (completa):
+- name: 3. Agregar clave GPG oficial de Docker
+  ansible.builtin.apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+- name: 4. Agregar repositorio oficial de Docker
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+- name: 5. Instalar Docker CE
+  ansible.builtin.apt:
+    name: [docker-ce, docker-ce-cli, containerd.io]
+    state: present
+    update_cache: yes
+Volver a ejecutar el playbook:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+192.168.56.11 : ok=9  changed=3  unreachable=0  failed=0
+192.168.56.12 : ok=9  changed=3  unreachable=0  failed=0
+192.168.56.13 : ok=9  changed=3  unreachable=0  failed=0
+
+FASE 4 — Inicialización del clúster Swarm
+Crear estructuras de roles:
+mkdir -p ~/ansible_project/roles/swarm_init/tasks
+mkdir -p ~/ansible_project/roles/swarm_join/tasks
+Escribir roles/swarm_init/tasks/main.yml (primera versión con community.docker):
+- name: 1. Inicializar Docker Swarm
+  community.docker.docker_swarm:
+    state: present
+    advertise_addr: "192.168.56.11"
+  register: swarm_output
+- name: 2. Obtener token para Workers
+  community.docker.docker_swarm_info:
+  register: swarm_info
+Escribir roles/swarm_join/tasks/main.yml (primera versión):
+- name: 1. Unirse al clúster Swarm
+  community.docker.docker_swarm:
+    state: join
+    advertise_addr: "{{ inventory_hostname }}"
+    join_token: "{{ hostvars['192.168.56.11']['swarm_info']['swarm_info']['JoinTokens']['Worker'] }}"
+    remote_addrs:
+      - "192.168.56.11:2377"
+Añadir fases 2 y 3 al playbook principal y ejecutar:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+Error en swarm_join:
+fatal: [192.168.56.12]: FAILED! => 'dict object' has no attribute 'swarm_info'
+❌ Error: La variable swarm_info no se propaga automáticamente entre hosts en Ansible.
+Añadir tarea de debug para inspeccionar la variable:
+- name: 3. Debug token
+  debug:
+    var: swarm_info
+Salida del debug:
+"swarm_info": {
+  "stdout": "SWMTKN-1-3ehjcmur5hj7ixd49...",
+  "stdout_lines": ["SWMTKN-1-3ehjcmur5hj7..."]
+}
+📌 Nota: El token se captura bien como stdout de un comando shell, pero no se comparte entre plays.
+Solución: usar set_fact para hacer la variable global:
+- name: 3. Guardar token como fact global
+  set_fact:
+    worker_token: "{{ swarm_info.stdout }}"
+Actualizar swarm_join para usar el nuevo nombre:
+join_token: "{{ hostvars['192.168.56.11']['worker_token'] }}"
+Ejecutar de nuevo:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+PLAY [3. Unir Nodos Workers al Swarm]
+TASK [swarm_join : 1. Unirse al clúster Swarm]
+changed: [192.168.56.12]
+changed: [192.168.56.13]
+Verificar el clúster desde el Manager:
+ssh swarmmanager@192.168.56.11
+sudo docker node ls
+ID                HOSTNAME       STATUS  AVAILABILITY  MANAGER STATUS  ENGINE VERSION
+244fh... *        swarm-manager  Ready   Active        Leader          20.10.7
+1aswe...          worker-1       Ready   Active                        20.10.7
+gpvf1...          worker-2       Ready   Active                        20.10.7
+
+FASE 5 — Despliegue de la aplicación
+Crear estructura del rol:
+mkdir -p ~/ansible_project/roles/deploy_app/tasks
+mkdir -p ~/ansible_project/roles/deploy_app/files
+Crear roles/deploy_app/files/stack.yml:
+version: '3.8'
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    networks:
+      - red_proyecto
+    deploy:
+      replicas: 3
+  db:
+    image: redis:alpine
+    networks:
+      - red_proyecto
+networks:
+  red_proyecto:
+    driver: overlay
+Crear roles/deploy_app/tasks/main.yml:
+- name: 1. Copiar stack.yml al Manager
+  copy:
+    src: stack.yml
+    dest: /home/swarmmanager/stack.yml
+- name: 2. Desplegar el Stack
+  community.docker.docker_stack:
+    name: mi_proyecto
+    compose:
+      - /home/swarmmanager/stack.yml
+    state: present
+Añadir fase 4 al playbook principal y ejecutar:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+Error:
+fatal: [192.168.56.11]: FAILED! => {"msg": "jsondiff is not installed, try 'pip install jsondiff'"}
+Instalar jsondiff en el Manager:
+ansible manager -i ~/ansible_project/hosts -m shell -a "pip3 install jsondiff" -b
+Error:
+error: externally-managed-environment
+✅ Solución: Usar el flag --break-system-packages para Ubuntu 24.04:
+ansible manager -i ~/ansible_project/hosts -m shell -a "pip3 install jsondiff --break-system-packages" -b
+192.168.56.11 | CHANGED | rc=0
+Volver a ejecutar el playbook:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+PLAY RECAP
+192.168.56.11 : ok=16  changed=2  unreachable=0  failed=0
+192.168.56.12 : ok=11  changed=0  unreachable=0  failed=0
+192.168.56.13 : ok=11  changed=0  unreachable=0  failed=0
+Verificar el stack:
+sudo docker stack ps mi_proyecto
+NAME                IMAGE          NODE          DESIRED STATE  CURRENT STATE
+mi_proyecto_db.1    redis:alpine   swarmmanager  Running        Running 13 min ago
+mi_proyecto_web.1   nginx:alpine   worker1       Running        Running 13 min ago
+mi_proyecto_web.2   nginx:alpine   worker2       Running        Running 13 min ago
+mi_proyecto_web.3   nginx:alpine   swarmmanager  Running        Running 13 min ago
+
+FASE 6 — Pruebas de resiliencia
+Prueba 1 — Caída de un Worker
+Apagar Worker 1 desde el Nodo Control:
+ansible workers[0] -i ~/ansible_project/hosts -m shell -a "sudo shutdown -h now" -b
+Verificar redistribución desde el Manager:
+sudo docker node ls
+worker-1  Down  Active
+sudo docker stack ps mi_proyecto
+Réplicas redistribuidas en Manager y Worker 2. 3 nginx en Running. ✓
+Prueba 2 — Recuperación del Worker
+Encender Worker 1 desde VMware.
+Verificar recuperación:
+sudo docker node ls
+worker-1  Ready  Active  ✓
+Prueba 3 — Idempotencia del playbook
+Ejecutar el playbook por segunda vez sobre el clúster ya desplegado:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+Problema: Worker 2 se queda colgado actualizando caché. No tiene ruta por defecto (gateway):
+ping: connect: Network is unreachable
+La tabla de rutas de Worker 2 no tenía la ruta default:
+192.168.56.0/24 dev ens34 proto kernel scope link src 192.168.56.13
+192.168.145.0/24 dev ens33 proto kernel scope link src 192.168.145.134
+# FALTA: default via 192.168.145.2
+Causa: el adaptador NAT de Worker 2 estaba en un VMnet diferente con subred 192.168.145.x en lugar de 192.168.222.x. Se corrigió intercambiando el orden de los adaptadores en VMware Settings (NAT primero, Host-Only segundo).
+✅ Solución: Corregir el orden de adaptadores en VMware y actualizar netplan para usar ens38 en lugar de ens34.
+Resultado tras la corrección:
+192.168.56.11 : ok=16  changed=0  unreachable=0  failed=0
+192.168.56.12 : ok=11  changed=0  unreachable=0  failed=0
+192.168.56.13 : ok=11  changed=1  unreachable=0  failed=0  ✓
+
+Problema: pérdida de acceso tras suspender las VMs
+Al reanudar las VMs después de varios días, Nginx deja de responder. Docker pierde el estado de red al reanudar desde suspensión.
+Diagnóstico: el stack sigue Running pero curl falla:
+sudo docker stack ps mi_proyecto
+Running en todos los nodos
+curl http://192.168.222.139
+curl: (7) Failed to connect to 192.168.222.139 port 80
+Solución: reiniciar Docker en todos los nodos y redesplegar el stack:
+ansible swarm_nodes -i ~/ansible_project/hosts -m shell -a "sudo systemctl restart docker" -b
+ssh swarmmanager@192.168.56.11 "sudo docker stack deploy -c /home/swarmmanager/stack.yml mi_proyecto"
+Nginx responde correctamente tras el reinicio. ✓
+Crear script restart_cluster.sh para automatizar el proceso:
+nano ~/ansible_project/restart_cluster.sh
+#!/bin/bash
+echo "Reiniciando Docker en todos los nodos..."
+ansible swarm_nodes -i ~/ansible_project/hosts -m shell -a "sudo systemctl restart docker" -b
+sleep 15
+echo "Redesplegando stack..."
+ssh swarmmanager@192.168.56.11 "sudo docker stack deploy -c /home/swarmmanager/stack.yml mi_proyecto"
+echo "Listo."
+chmod +x ~/ansible_project/restart_cluster.sh
+
+Problema: Nodo Control en VMnet diferente
+El Nodo Control tenía el adaptador Host-Only como primero (ens33) y NAT como segundo, al contrario que el resto de VMs. Esto hacía que su ens33 tuviera IP 192.168.145.x en lugar de 192.168.222.x.
+Solución: con la VM apagada en VMware, intercambiar los adaptadores — poner NAT como primer adaptador y Host-Only como segundo.
+Actualizar /etc/netplan/00-installer-config.yaml para que ens33 sea NAT (dhcp4: true) y ens34 sea Host-Only (IP estática 192.168.56.10).
+Verificar:
+curl http://192.168.222.139
+<h1>TFG — Docker Swarm + Ansible</h1>  ✓
+
+FASE 7 — Página web personalizada
+Crear el archivo HTML:
+nano ~/ansible_project/roles/deploy_app/files/index.html
+Contenido: página HTML con estilos, tabla de arquitectura del proyecto (nodos, IPs, roles).
+Actualizar roles/deploy_app/tasks/main.yml para copiar el HTML al Manager:
+- name: 2. Crear directorio para web personalizada
+  file:
+    path: /home/swarmmanager/html
+    state: directory
+- name: 3. Copiar página HTML personalizada
+  copy:
+    src: index.html
+    dest: /home/swarmmanager/html/index.html
+Actualizar stack.yml para montar el HTML en Nginx:
+volumes:
+  - /home/swarmmanager/html:/usr/share/nginx/html:ro
+Ejecutar el playbook:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+192.168.56.11 : ok=18  changed=4  unreachable=0  failed=0
+Verificar desde el Manager:
+curl http://192.168.222.139
+<h1>TFG — Docker Swarm + Ansible</h1>  ✓
+
+FASE 8 — Healthchecks
+Actualizar stack.yml añadiendo healthchecks:
+healthcheck:  # en el servicio web
+  test: ["CMD", "wget", "-qO-", "http://localhost"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 10s
+healthcheck:  # en el servicio db
+  test: ["CMD", "redis-cli", "ping"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+Ejecutar el playbook y verificar:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+sudo docker ps
+3f324936edd7  nginx:alpine  Up 7 minutes (healthy)  ✓
+
+FASE 9 — Contador de visitas con Redis (app Flask personalizada)
+Crear directorio para la app:
+mkdir -p ~/ansible_project/roles/deploy_app/files/app
+Crear app.py:
+nano ~/ansible_project/roles/deploy_app/files/app/app.py
+from flask import Flask
+import redis, os
+app = Flask(__name__)
+r = redis.Redis(host='db', port=6379)
+@app.route('/')
+def index():
+    count = r.incr('visitas')
+    return f'<h1>TFG</h1><p>Visitas: {count}</p><p>Contenedor: {os.environ.get("HOSTNAME")}</p>'
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=80)
+Crear requirements.txt:
+nano ~/ansible_project/roles/deploy_app/files/app/requirements.txt
+flask
+redis
+Crear Dockerfile:
+nano ~/ansible_project/roles/deploy_app/files/app/Dockerfile
+FROM python:3.12-alpine
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY app.py .
+CMD ["python", "app.py"]
+Actualizar roles/deploy_app/tasks/main.yml para construir la imagen:
+- name: 4. Crear directorio para la app
+  file:
+    path: /home/swarmmanager/app
+    state: directory
+- name: 5. Copiar archivos de la app
+  copy:
+    src: app/
+    dest: /home/swarmmanager/app/
+- name: 6. Construir imagen Docker de la app
+  community.docker.docker_image:
+    name: mi_proyecto_web
+    tag: latest
+    build:
+      path: /home/swarmmanager/app
+    source: build
+Actualizar stack.yml para usar la nueva imagen (eliminar volumen y cambiar image):
+web:
+  image: mi_proyecto_web:latest
+  ports:
+    - "80:80"
+Ejecutar el playbook:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+192.168.56.11 : ok=21  changed=5  unreachable=0  failed=0
+Verificar el stack:
+sudo docker stack ps mi_proyecto
+Problema: réplicas en Workers fallan con 'No such image':
+mi_proyecto_web.1  worker2  Rejected  'No such image: mi_proyecto_web:latest'
+❌ Error: La imagen se construyó solo en el Manager. Los Workers no la tienen.
+✅ Solución: Construir la imagen manualmente en cada Worker.
+Copiar archivos de la app a los Workers y construir la imagen:
+ansible workers -i ~/ansible_project/hosts -m shell -a "mkdir -p /home/{{ ansible_user }}/app" -b
+192.168.56.12 | CHANGED | rc=0
+192.168.56.13 | CHANGED | rc=0
+ansible workers -i ~/ansible_project/hosts -m copy -a "src=.../app/ dest=/home/{{ ansible_user }}/app/" -b
+192.168.56.12 | CHANGED
+192.168.56.13 | CHANGED
+Intento de build por nombre (falla porque el inventario usa IPs):
+ansible worker1 -i ~/ansible_project/hosts -m shell -a "cd ~/app && sudo docker build -t mi_proyecto_web:latest ." -b
+[WARNING]: Could not match supplied host pattern, ignoring: worker1
+✅ Solución: Usar IPs directamente:
+ansible 192.168.56.12 -i ~/ansible_project/hosts -m shell -a "cd /home/worker1/app && sudo docker build -t mi_proyecto_web:latest ." -b
+192.168.56.12 | CHANGED | rc=0 >> Successfully built ...
+ansible 192.168.56.13 -i ~/ansible_project/hosts -m shell -a "cd /home/worker2/app && sudo docker build -t mi_proyecto_web:latest ." -b
+192.168.56.13 | CHANGED | rc=0 >> Successfully built ...
+Redesplegar el stack:
+sudo docker stack rm mi_proyecto
+sleep 10
+sudo docker stack deploy -c /home/swarmmanager/stack.yml mi_proyecto
+Problema: contenedores fallan con exit code 137:
+mi_proyecto_web.1  Shutdown  Failed  'task: non-zero exit (137): docker-runc'
+❌ Error: Exit 137 = OOM killer (falta de memoria) O el healthcheck matando el contenedor.
+Los logs muestran que Flask arranca correctamente:
+* Serving Flask app 'app'
+* Running on all addresses (0.0.0.0)
+* Running on http://127.0.0.1:80
+✅ Solución: El healthcheck usa wget que no está disponible en la imagen Flask. Eliminar el healthcheck del servicio web.
+Actualizar stack.yml eliminando healthcheck del servicio web y ejecutar:
+sudo docker stack rm mi_proyecto
+sudo docker stack deploy -c /home/swarmmanager/stack.yml mi_proyecto
+mi_proyecto_db.1    redis:alpine          worker1   Running
+mi_proyecto_web.1   mi_proyecto_web:latest swarmmanager  Running
+mi_proyecto_web.2   mi_proyecto_web:latest worker1   Running
+mi_proyecto_web.3   mi_proyecto_web:latest worker2   Running
+Verificar el contador de visitas:
+curl http://192.168.222.139
+<h1>TFG — Docker Swarm + Ansible</h1>
+<p>Esta página ha sido visitada <b>1</b> veces.</p>
+<p>Servido por el contenedor: <b>744dda29336c</b></p>
+curl http://192.168.222.140
+<p>Esta página ha sido visitada <b>6</b> veces.</p>
+<p>Servido por el contenedor: <b>744dda29336c</b></p>
+curl http://192.168.222.142
+<p>Esta página ha sido visitada <b>7</b> veces.</p>  ✓
+El contador es compartido entre todos los nodos a través de Redis. La Fase 9 está completada.
+
+
+FASE 10 — Escalado de réplicas con Ansible
+Crear el archivo scale.yml:
+nano ~/ansible_project/scale.yml
+---
+- name: Escalar servicio web
+  hosts: manager
+  become: yes
+  tasks:
+    - name: Escalar réplicas del servicio web
+      shell: "docker service scale mi_proyecto_web={{ replicas }}"
+      vars:
+        replicas: "{{ replicas | default(3) }}"
+📌 Nota: Primera versión usaba community.docker.docker_swarm_service pero requería la imagen como parámetro obligatorio. Se simplificó con shell directo.
+Escalar a 5 réplicas:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/scale.yml -e "replicas=5"
+TASK [Escalar réplicas del servicio web]
+changed: [192.168.56.11]
+sudo docker service ls
+mi_proyecto_web   replicated   5/5   mi_proyecto_web:latest   *:80->80/tcp  ✓
+Volver a 3 réplicas:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/scale.yml -e "replicas=3"
+mi_proyecto_web   replicated   3/3   ✓
+
+FASE 11 — Monitoring con Visualizer
+Añadir el servicio Visualizer al stack.yml:
+visualizer:
+  image: dockersamples/visualizer:latest
+  ports:
+    - "8080:8080"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+  networks:
+    - red_proyecto
+  deploy:
+    placement:
+      constraints:
+        - node.role == manager
+Ejecutar el playbook:
+ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
+192.168.56.11 : ok=20  changed=2  unreachable=0  failed=0  ✓
+Acceder al Visualizer desde el navegador del host:
+http://192.168.222.139:8080
+Interfaz visual en tiempo real con los 3 nodos y sus contenedores. ✓
+Prueba de escalado en tiempo real: al escalar a 5 réplicas con scale.yml, el Visualizer muestra los nuevos contenedores apareciendo en los nodos sin recargar la página.
+
+FASE 12 — DNS local con dnsmasq
+Instalar dnsmasq en el Nodo Control:
+sudo apt install dnsmasq -y
+Configurar dnsmasq:
+sudo nano /etc/dnsmasq.conf
+# Añadir al final:
+address=/swarm.local/192.168.222.139
+address=/manager.local/192.168.56.11
+address=/worker1.local/192.168.56.12
+address=/worker2.local/192.168.56.13
+Arrancar dnsmasq — e
