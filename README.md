@@ -31,22 +31,26 @@ ansible-playbook -i ~/ansible_project/hosts ~/ansible_project/deploy_swarm.yml
 - **visualizer** — Docker Visualizer · 1 réplica · puerto 8080
 
 ## Estructura del repositorio
+
+```
 Nodo-Control/ansible_project/
 ├── deploy_swarm.yml        # Playbook principal (4 fases)
 ├── scale.yml               # Escalado dinámico de réplicas
 ├── restart_cluster.sh      # Script de recuperación post-suspensión
 ├── hosts                   # Inventario de nodos
 └── roles/
-├── docker_install/     # Instalación de Docker CE
-├── swarm_init/         # Inicialización del Manager
-├── swarm_join/         # Unión de Workers al clúster
-└── deploy_app/         # Despliegue del stack
+    ├── docker_install/     # Instalación de Docker CE
+    ├── swarm_init/         # Inicialización del Manager
+    ├── swarm_join/         # Unión de Workers al clúster
+    └── deploy_app/         # Despliegue del stack
+
 Swarm-Manager/
 ├── stack.yml               # Definición del stack Docker
 └── app/                    # Aplicación Flask
-├── app.py
-├── requirements.txt
-└── Dockerfile
+    ├── app.py
+    ├── requirements.txt
+    └── Dockerfile
+```
 
 ## Requisitos previos
 
