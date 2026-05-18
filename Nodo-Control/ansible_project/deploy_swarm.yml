@@ -14,7 +14,29 @@
   roles:
     - swarm_join
 
-- name: 4. Desplegar Stack de Aplicacion
+- name: 4. Construir imagen Docker en los Workers
+  hosts: workers
+  become: yes
+  tasks:
+    - name: 4.1. Crear directorio para la app
+      file:
+        path: /home/{{ ansible_user }}/app
+        state: directory
+
+    - name: 4.2. Copiar archivos de la app
+      copy:
+        src: roles/deploy_app/files/app/
+        dest: /home/{{ ansible_user }}/app/
+
+    - name: 4.3. Construir imagen Docker de la app
+      community.docker.docker_image:
+        name: mi_proyecto_web
+        tag: latest
+        build:
+          path: /home/{{ ansible_user }}/app
+        source: build
+
+- name: 5. Desplegar Stack de Aplicacion
   hosts: manager
   become: yes
   roles:
