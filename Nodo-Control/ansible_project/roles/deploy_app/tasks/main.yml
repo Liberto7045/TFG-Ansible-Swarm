@@ -53,13 +53,20 @@
     update_cache: yes
   become: yes
 
-- name: 10. Configurar dnsmasq
+- name: 10. Deshabilitar systemd-resolved
+  service:
+    name: systemd-resolved
+    state: stopped
+    enabled: no
+  become: yes
+
+- name: 11. Configurar dnsmasq
   copy:
     content: "address=/libertotfg.test/192.168.222.144\n"
     dest: /etc/dnsmasq.conf
   become: yes
 
-- name: 11. Reiniciar y habilitar dnsmasq
+- name: 12. Reiniciar y habilitar dnsmasq
   service:
     name: dnsmasq
     state: restarted
