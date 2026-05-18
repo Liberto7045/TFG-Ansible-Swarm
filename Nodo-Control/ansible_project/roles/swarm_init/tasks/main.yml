@@ -10,6 +10,6 @@
   register: swarm_info
   changed_when: false
 
-- name: 3. Guardar token como fact global
+- name: 3. Guardar token como fact
   set_fact:
-    worker_token: "{{ swarm_info.stdout }}"
+    worker_token: "{{ swarm_info.stdout | trim }}"
