@@ -22,7 +22,7 @@
 
 - name: 4. Agregar repositorio oficial de Docker
   ansible.builtin.apt_repository:
-    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ans>
+    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }}
     state: present
     filename: docker
 
