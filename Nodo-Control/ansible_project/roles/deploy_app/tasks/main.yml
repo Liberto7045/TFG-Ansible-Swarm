@@ -1,4 +1,11 @@
 ---
+- name: 0. Instalar jsondiff
+  pip:
+    name: jsondiff
+    state: present
+    extra_args: --break-system-packages
+  become: yes
+
 - name: 1. Copiar stack.yml al Manager
   copy:
     src: stack.yml
