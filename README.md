@@ -43,13 +43,6 @@ Nodo-Control/ansible_project/
     ├── swarm_init/         # Inicialización del Manager
     ├── swarm_join/         # Unión de Workers al clúster
     └── deploy_app/         # Despliegue del stack
-
-Swarm-Manager/
-├── stack.yml               # Definición del stack Docker
-└── app/                    # Aplicación Flask
-    ├── app.py
-    ├── requirements.txt
-    └── Dockerfile
 ```
 
 ## Requisitos previos
@@ -58,7 +51,6 @@ Swarm-Manager/
 - Ansible 2.16+ instalado en el Nodo Control
 - Colección community.docker: `ansible-galaxy collection install community.docker`
 - Acceso SSH sin contraseña desde el Nodo Control a los 3 nodos
-- `jsondiff` instalado en el Manager: `pip3 install jsondiff --break-system-packages`
 
 ## Uso
 
