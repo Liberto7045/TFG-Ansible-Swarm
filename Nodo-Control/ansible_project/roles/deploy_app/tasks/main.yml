@@ -1,37 +1,37 @@
 ---
-- name: 0. Instalar jsondiff
+- name: 1. Instalar jsondiff
   pip:
     name: jsondiff
     state: present
     extra_args: --break-system-packages
   become: yes
 
-- name: 1. Copiar stack.yml al Manager
+- name: 2. Copiar stack.yml al Manager
   copy:
     src: stack.yml
     dest: /home/swarmmanager/stack.yml
 
-- name: 2. Crear directorio para web personalizada
+- name: 3. Crear directorio para web personalizada
   file:
     path: /home/swarmmanager/html
     state: directory
 
-- name: 3. Copiar página HTML personalizada
+- name: 4. Copiar página HTML personalizada
   copy:
     src: index.html
     dest: /home/swarmmanager/html/index.html
 
-- name: 4. Crear directorio para la app
+- name: 5. Crear directorio para la app
   file:
     path: /home/swarmmanager/app
     state: directory
 
-- name: 5. Copiar archivos de la app
+- name: 6. Copiar archivos de la app
   copy:
     src: app/
     dest: /home/swarmmanager/app/
 
-- name: 6. Construir imagen Docker de la app
+- name: 7. Construir imagen Docker de la app
   community.docker.docker_image:
     name: mi_proyecto_web
     tag: latest
@@ -39,9 +39,29 @@
       path: /home/swarmmanager/app
     source: build
 
-- name: 7. Desplegar el Stack
+- name: 8. Desplegar el Stack
   community.docker.docker_stack:
     name: mi_proyecto
     compose:
       - /home/swarmmanager/stack.yml
     state: present
+
+- name: 9. Instalar dnsmasq
+  apt:
+    name: dnsmasq
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: 10. Configurar dnsmasq
+  copy:
+    content: "address=/libertotfg.test/192.168.222.144\n"
+    dest: /etc/dnsmasq.conf
+  become: yes
+
+- name: 11. Reiniciar y habilitar dnsmasq
+  service:
+    name: dnsmasq
+    state: restarted
+    enabled: yes
+  become: yes
