@@ -3,6 +3,6 @@
   community.docker.docker_swarm:
     state: join
     advertise_addr: "{{ inventory_hostname }}"
-    join_token: "{{ hostvars['192.168.56.11']['worker_token'] }}"
+    join_token: "{{ hostvars[groups['manager'][0]]['worker_token'] }}"
     remote_addrs:
       - "192.168.56.11:2377"
